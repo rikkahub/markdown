@@ -1,4 +1,4 @@
 jdk:
   - openjdk17
 install:
-  - ./gradlew publishJvmPublicationToMavenLocal -x javadocJar
+  - ./gradlew publishJvmPublicationToMavenLocal -x :docs:dokkaHtml
