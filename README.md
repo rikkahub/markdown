@@ -2,6 +2,23 @@
 
 A multiplatform Markdown processor written in Kotlin.
 
+## Fork Changes
+
+This fork includes the following fixes on top of the upstream [intellij-markdown](https://github.com/JetBrains/markdown):
+
+### Fix: CJK emphasis/bold rendering with adjacent punctuation
+
+When emphasis delimiters (`**`, `*`, `__`, `_`) appear between punctuation (quotes, brackets, etc.) and CJK characters, the CommonMark flanking delimiter rules fail to recognize them as valid openers/closers. For example:
+
+| Markdown | Expected | Before fix |
+|---|---|---|
+| `**'确实'**厉害啊` | **'确实'**厉害啊 | `**'确实'**厉害啊` (raw text) |
+| `**"渴望"**和**"行动力"**的能量` | **"渴望"**和**"行动力"**的能量 | `**"渴望"**和**"行动力"**的能量` (raw text) |
+
+**Root cause:** The CommonMark spec's [flanking delimiter run](https://spec.commonmark.org/0.30/#left-flanking-delimiter-run) rules require that when a delimiter is adjacent to punctuation on one side, the other side must be whitespace or punctuation. CJK characters are neither, causing the check to fail.
+
+**Fix:** Treat CJK characters (U+2E80–U+9FFF, U+AC00–U+D7AF, U+F900–U+FAFF) as word boundaries in the flanking delimiter rules, similar to whitespace and punctuation.
+
 ## Introduction
 
 [intellij-markdown][self] is an extensible Markdown processor written in Kotlin.

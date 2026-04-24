@@ -16,6 +16,13 @@ class SequentialParserUtil {
             return isPunctuation(info.charLookup(lookup))
         }
 
+        fun isCJK(info: TokensCache.Iterator, lookup: Int): Boolean {
+            val char = info.charLookup(lookup)
+            return char in '⺀'..'鿿' ||
+                   char in '가'..'힯' ||
+                   char in '豈'..'﫿'
+        }
+
        fun filterBlockquotes(tokensCache: TokensCache, textRange: IntRange): List<IntRange> {
             val result = ArrayList<IntRange>()
             var lastStart = textRange.first

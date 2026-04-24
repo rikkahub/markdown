@@ -79,7 +79,8 @@ abstract class DelimiterParser {
         return !isWhitespace(rightIt, 1) &&
             (!isPunctuation(rightIt, 1)
                 || isWhitespace(leftIt, -1)
-                || isPunctuation(leftIt, -1))
+                || isPunctuation(leftIt, -1)
+                || isCJK(leftIt, -1))
     }
 
     /**
@@ -90,7 +91,8 @@ abstract class DelimiterParser {
             !isWhitespace(leftIt, -1) &&
             (!isPunctuation(leftIt, -1)
                 || isWhitespace(rightIt, 1)
-                || isPunctuation(rightIt, 1))
+                || isPunctuation(rightIt, 1)
+                || isCJK(rightIt, 1))
     }
 
     open fun isWhitespace(info: TokensCache.Iterator, lookup: Int): Boolean {
@@ -99,6 +101,10 @@ abstract class DelimiterParser {
 
     open fun isPunctuation(info: TokensCache.Iterator, lookup: Int): Boolean {
         return SequentialParserUtil.isPunctuation(info, lookup)
+    }
+
+    open fun isCJK(info: TokensCache.Iterator, lookup: Int): Boolean {
+        return SequentialParserUtil.isCJK(info, lookup)
     }
 
     companion object {
