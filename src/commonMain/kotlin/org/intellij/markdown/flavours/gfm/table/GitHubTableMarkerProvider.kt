@@ -36,7 +36,21 @@ class GitHubTableMarkerProvider : MarkerBlockProvider<MarkerProcessor.StateInfo>
     }
 
     override fun interruptsParagraph(pos: LookaheadText.Position, constraints: MarkdownConstraints): Boolean {
-        return false
+        val currentLineFromPosition = pos.currentLineFromPosition
+        if (!currentLineFromPosition.contains('|')) {
+            return false
+        }
+
+        val split = GitHubTableMarkerBlock.splitByPipes(currentLineFromPosition)
+        val numberOfHeaderCells = split
+            .mapIndexed { i, s -> (i > 0 && i < split.lastIndex) || s.isNotBlank() }
+            .count { it }
+        if (numberOfHeaderCells == 0) {
+            return false
+        }
+
+        val nextLine = getNextLineFromConstraints(pos, constraints) ?: return false
+        return countSecondLineCells(nextLine) == numberOfHeaderCells
     }
 
     private fun getNextLineFromConstraints(pos: LookaheadText.Position, constraints: MarkdownConstraints): CharSequence? {
