@@ -10,3 +10,5 @@ Inline math with no space: $x+y$ is valid.
 
 $  
  x$
+
+The price is $5 and the cost is $10.

@@ -50,7 +50,10 @@ class MathParser : SequentialParser {
 
     private fun canCloseInlineMath(dollarIterator: TokensCache.Iterator): Boolean {
         val prevType = dollarIterator.rawLookup(-1)
-        return prevType != null && !isWhitespace(prevType)
+        if (prevType == null || isWhitespace(prevType)) return false
+        val charAfter = dollarIterator.charLookup(1)
+        if (charAfter in '0'..'9') return false
+        return true
     }
 
     private fun isWhitespace(type: IElementType): Boolean {

@@ -63,3 +63,13 @@ Markdown:MARKDOWN_FILE
     Markdown:TEXT('x')
     Markdown:DOLLAR('$')
   Markdown:EOL('\n')
+  Markdown:EOL('\n')
+  Markdown:PARAGRAPH
+    Markdown:TEXT('The price is')
+    WHITE_SPACE(' ')
+    Markdown:DOLLAR('$')
+    Markdown:TEXT('5 and the cost is')
+    WHITE_SPACE(' ')
+    Markdown:DOLLAR('$')
+    Markdown:TEXT('10.')
+  Markdown:EOL('\n')
