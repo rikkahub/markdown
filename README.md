@@ -67,6 +67,25 @@ If you are using Maven or older Gradle, you need to specify the correct artifact
 * `org.jetbrains:markdown-jvm:<version>` for the JVM version
 * `org.jetbrains:markdown-js:<version>` for the JS version
 
+#### Using intermediate releases
+
+Intermediate `A.B.C.x` versions are published to the JetBrains `intellij-dependencies` repository. 
+If you want to use them, then add `intellij-dependencies` to your repository:
+
+```groovy
+repositories {
+    maven {
+        url "https://packages.jetbrains.team/maven/p/ij/intellij-dependencies"
+    }
+}
+```
+
+```kts
+repositories {
+    maven("https://packages.jetbrains.team/maven/p/ij/intellij-dependencies")
+}
+```
+
 ### Using `intellij-markdown` for parsing and generating HTML
 
 One of the goals of this project is to provide flexibility in terms of the tasks being solved.
@@ -78,6 +97,23 @@ in several stages:
 3. Generate HTML for preview
 
 These tasks may be completed independently according to the current needs. 
+
+#### Input line endings
+
+The parser requires LF (`\n`) line endings. Callers must normalize CRLF (`\r\n`) and bare CR (`\r`) to LF before parsing:
+
+```kotlin
+val src = originalText.replace("\r\n", "\n").replace("\r", "\n")
+```
+
+For streaming input, do not normalize each chunk independently with the example above. Buffer a trailing CR
+until the next character or the end of the stream: if the next character is LF, emit a single LF for the pair;
+otherwise, emit an LF for the buffered CR before processing the next character. At the end of the stream,
+emit an LF for any remaining buffered CR. This prevents a CRLF split across chunks from becoming two line breaks.
+
+Use the same normalized text for parsing and HTML generation. AST offsets refer to the text supplied to the parser
+(with `baseOffset` added when specified). Normalizing CRLF to LF changes character offsets; callers that need
+positions in the original text must maintain their own offset mapping.
 
 #### Simple html generation (Kotlin)
 
@@ -93,7 +129,7 @@ val html = HtmlGenerator(src, parsedTree, flavour).generateHtml()
 ```java
 final String src = "Some *Markdown*";
 final MarkdownFlavourDescriptor flavour = new GFMFlavourDescriptor();
-final ASTNode parsedTree = new MarkdownParser(flavour).buildMarkdownTreeFromString(text);
+final ASTNode parsedTree = new MarkdownParser(flavour).buildMarkdownTreeFromString(src);
 final String html = new HtmlGenerator(src, parsedTree, flavour, false).generateHtml();
 ```
 
@@ -228,7 +264,7 @@ It can be used as a [reference][GFMFlavourDescriptor] for implementing your own 
 [Kotlin]: https://github.com/JetBrains/kotlin
 [markdown-flavours]: https://www.markdownguide.org/getting-started/#flavors-of-markdown
 [jflex]: https://github.com/jflex-de/jflex
-[markdown-plugin]: https://github.com/JetBrains/intellij-plugins/tree/master/markdown
+[markdown-plugin]: https://github.com/JetBrains/intellij-community/tree/master/plugins/markdown
 
 [AST]: https://en.wikipedia.org/wiki/Abstract_syntax_tree 'Wikipedia reference'
 [visitor-pattern]: https://en.wikipedia.org/wiki/Visitor_pattern 'Wikipedia reference'

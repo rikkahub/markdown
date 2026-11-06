@@ -13,9 +13,11 @@ class ReferenceLinkParser : SequentialParser {
         val delegateIndices = RangesListBuilder()
         var iterator: TokensCache.Iterator = tokens.RangesListIterator(rangesToGlue)
 
+        val scanIndex by lazy { LinkParserUtil.ScanIndex(tokens, rangesToGlue) }
+
         while (iterator.type != null) {
             if (iterator.type == MarkdownTokenTypes.LBRACKET) {
-                val referenceLink = parseReferenceLink(iterator)
+                val referenceLink = parseReferenceLink(iterator, scanIndex)
                 if (referenceLink != null) {
                     iterator = referenceLink.iteratorPosition.advance()
                     result = result.withOtherParsingResult(referenceLink)
@@ -31,22 +33,34 @@ class ReferenceLinkParser : SequentialParser {
     }
 
     companion object {
-        fun parseReferenceLink(iterator: TokensCache.Iterator): LocalParsingResult? {
-            return parseFullReferenceLink(iterator) ?: parseShortReferenceLink(iterator)
+        fun parseReferenceLink(
+            iterator: TokensCache.Iterator,
+            scanIndex: LinkParserUtil.ScanIndex? = null
+        ): LocalParsingResult? {
+            return parseFullReferenceLink(iterator, scanIndex) ?: parseShortReferenceLink(iterator)
         }
 
-        private fun parseFullReferenceLink(iterator: TokensCache.Iterator): LocalParsingResult? {
+        private fun parseFullReferenceLink(
+            iterator: TokensCache.Iterator,
+            scanIndex: LinkParserUtil.ScanIndex?
+        ): LocalParsingResult? {
             val startIndex = iterator.index
 
-            val linkText = LinkParserUtil.parseLinkText(iterator)
-                    ?: return null
-            var it = linkText.iteratorPosition.advance()
+            // See InlineLinkParser.parseInlineLink.
+            val linkTextEnd = if (scanIndex != null) {
+                scanIndex.matchingBracket(iterator)
+            } else {
+                LinkParserUtil.parseLinkText(iterator)?.iteratorPosition
+            } ?: return null
+            var it = linkTextEnd.advance()
 
-            if (it.type == MarkdownTokenTypes.EOL) {
-                it = it.advance()
+            if (it.start != linkTextEnd.end) {
+                return null
             }
 
             val linkLabel = LinkParserUtil.parseLinkLabel(it)
+                    ?: return null
+            val linkText = LinkParserUtil.parseLinkText(iterator)
                     ?: return null
 
             it = linkLabel.iteratorPosition
@@ -62,26 +76,24 @@ class ReferenceLinkParser : SequentialParser {
 
             val linkLabel = LinkParserUtil.parseLinkLabel(iterator)
                     ?: return null
-            
+
             var it = linkLabel.iteratorPosition
             val shortcutLinkEnd = it
 
             it = it.advance()
-            if (it.type == MarkdownTokenTypes.EOL) {
-                it = it.advance()
-            }
 
-            if (it.type == MarkdownTokenTypes.LBRACKET && it.rawLookup(1) == MarkdownTokenTypes.RBRACKET) {
+            if (it.start == shortcutLinkEnd.end && it.type == MarkdownTokenTypes.LBRACKET && it.rawLookup(1) == MarkdownTokenTypes.RBRACKET) {
                 it = it.advance()
             } else {
                 it = shortcutLinkEnd
             }
 
             return LocalParsingResult(it,
-                    linkLabel.parsedNodes 
+                    linkLabel.parsedNodes
                             + SequentialParser.Node(startIndex..it.index + 1, MarkdownElementTypes.SHORT_REFERENCE_LINK),
                     linkLabel.rangesToProcessFurther)
         }
+
 
     }
 

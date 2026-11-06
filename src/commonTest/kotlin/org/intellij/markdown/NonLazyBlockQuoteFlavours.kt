@@ -1,0 +1,46 @@
+package org.intellij.markdown
+
+import org.intellij.markdown.flavours.commonmark.CommonMarkFlavourDescriptor
+import org.intellij.markdown.flavours.commonmark.CommonMarkMarkerProcessor
+import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
+import org.intellij.markdown.parser.MarkerProcessor
+import org.intellij.markdown.parser.MarkerProcessorFactory
+import org.intellij.markdown.parser.ProductionHolder
+import org.intellij.markdown.parser.constraints.CommonMarkdownConstraints
+import org.intellij.markdown.parser.markerblocks.MarkerBlockProvider
+import org.intellij.markdown.parser.markerblocks.providers.BlockQuoteProvider
+
+/**
+ * A marker processor with the CommonMark providers where [BlockQuoteProvider] does not allow lazy continuation lines,
+ * surrounded by [first] and [last] providers.
+ */
+private class NonLazyBlockQuoteMarkerProcessor(
+    productionHolder: ProductionHolder,
+    constraintsBase: CommonMarkdownConstraints,
+    first: List<MarkerBlockProvider<StateInfo>> = emptyList(),
+    last: List<MarkerBlockProvider<StateInfo>> = emptyList()
+) : CommonMarkMarkerProcessor(productionHolder, constraintsBase) {
+    private val markerBlockProviders = buildList {
+        addAll(first)
+        super.getMarkerBlockProviders().mapTo(this) {
+            if (it is BlockQuoteProvider) BlockQuoteProvider(lazyContinuation = false) else it
+        }
+        addAll(last)
+    }
+
+    override fun getMarkerBlockProviders(): List<MarkerBlockProvider<StateInfo>> = markerBlockProviders
+}
+
+/**
+ * The CommonMark flavor that ends a block quote at a line without the `>` marker instead of continuing its paragraph.
+ */
+class NonLazyBlockQuoteCommonMarkFlavour : CommonMarkFlavourDescriptor() {
+    override val markerProcessorFactory: MarkerProcessorFactory = object : MarkerProcessorFactory {
+        override fun createMarkerProcessor(productionHolder: ProductionHolder): MarkerProcessor<*> {
+            return NonLazyBlockQuoteMarkerProcessor(productionHolder, CommonMarkdownConstraints.BASE)
+        }
+    }
+}
+
+/** The GFM flavor that ends a block quote at a line without the `>` marker. */
+class NonLazyBlockQuoteGfmFlavour : GFMFlavourDescriptor(lazyContinuation = false)

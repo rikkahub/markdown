@@ -1,9 +1,10 @@
 package org.intellij.markdown.parser.sequentialparsers.impl
 
-import org.intellij.markdown.IElementType
 import org.intellij.markdown.MarkdownTokenTypes
 import org.intellij.markdown.flavours.gfm.GFMElementTypes
 import org.intellij.markdown.flavours.gfm.GFMTokenTypes
+import org.intellij.markdown.html.isPunctuation
+import org.intellij.markdown.html.isWhitespace
 import org.intellij.markdown.parser.sequentialparsers.RangesListBuilder
 import org.intellij.markdown.parser.sequentialparsers.SequentialParser
 import org.intellij.markdown.parser.sequentialparsers.TokensCache
@@ -12,27 +13,39 @@ class MathParser : SequentialParser {
     override fun parse(tokens: TokensCache, rangesToGlue: List<IntRange>): SequentialParser.ParsingResult {
         val result = SequentialParser.ParsingResultBuilder()
         val delegateIndices = RangesListBuilder()
-        var iterator: TokensCache.Iterator = tokens.RangesListIterator(rangesToGlue)
+        var linkRangeIndex = 0
+        var skipUntil = -1
+        var iterator = tokens.RangesListIterator(rangesToGlue)
+
+        val ranges = collectLinkRanges(tokens, rangesToGlue)
+        val nextClosers = collectNextClosingIndices(tokens, rangesToGlue, ranges)
 
         while (iterator.type != null) {
-            if (iterator.type == GFMTokenTypes.DOLLAR) {
-                val isBlock = iterator.length >= 2
+            if (iterator.index <= skipUntil) {
+                iterator = iterator.advance()
+                continue
+            }
 
-                if (!isBlock && !canOpenInlineMath(iterator)) {
-                    delegateIndices.put(iterator.index)
-                    iterator = iterator.advance()
-                    continue
+            if (iterator.type == GFMTokenTypes.DOLLAR && canOpenMath(iterator)) {
+                while (linkRangeIndex < ranges.size && iterator.index > ranges[linkRangeIndex].last) {
+                    linkRangeIndex++
                 }
 
-                val endIterator = findClosingDollar(iterator.advance(), iterator.length, isBlock)
-
-                if (endIterator != null) {
-                    if (isBlock) {
-                        result.withNode(SequentialParser.Node(iterator.index..endIterator.index + 1, GFMElementTypes.BLOCK_MATH))
-                    } else {
-                        result.withNode(SequentialParser.Node(iterator.index..endIterator.index + 1, GFMElementTypes.INLINE_MATH))
+                val isInsideLink = linkRangeIndex < ranges.size && iterator.index >= ranges[linkRangeIndex].first
+                if (!isInsideLink) {
+                    val endIndex = nextClosers[iterator.index]
+                    if (endIndex == -1) {
+                        delegateIndices.put(iterator.index)
+                        iterator = iterator.advance()
+                        continue
                     }
-                    iterator = endIterator.advance()
+                    if (iterator.length == 1) {
+                        result.withNode(SequentialParser.Node(iterator.index..endIndex + 1, GFMElementTypes.INLINE_MATH))
+                    } else {
+                        result.withNode(SequentialParser.Node(iterator.index..endIndex + 1, GFMElementTypes.BLOCK_MATH))
+                    }
+                    skipUntil = endIndex
+                    iterator = iterator.advance()
                     continue
                 }
             }
@@ -43,41 +56,79 @@ class MathParser : SequentialParser {
         return result.withFurtherProcessing(delegateIndices.get())
     }
 
-    private fun canOpenInlineMath(dollarIterator: TokensCache.Iterator): Boolean {
-        val nextType = dollarIterator.rawLookup(1)
-        return nextType != null && !isWhitespace(nextType)
+    private fun collectNextClosingIndices(
+        tokens: TokensCache,
+        rangesToGlue: List<IntRange>,
+        linkRanges: List<IntRange>,
+    ): IntArray {
+        val result = IntArray(tokens.filteredTokens.size) { -1 }
+        val nextClosingByLength = HashMap<Int, Int>()
+        var linkRangeIndex = linkRanges.lastIndex
+
+        for (range in rangesToGlue.asReversed()) {
+            for (index in range.last downTo range.first) {
+                val iterator = tokens.Iterator(index)
+                if (iterator.type != GFMTokenTypes.DOLLAR) continue
+
+                while (linkRangeIndex >= 0 && index < linkRanges[linkRangeIndex].first) {
+                    linkRangeIndex--
+                }
+                val isInsideLink = linkRangeIndex >= 0 && index <= linkRanges[linkRangeIndex].last
+
+                result[index] = nextClosingByLength[iterator.length] ?: -1
+                if (!isInsideLink && canCloseMath(iterator)) {
+                    nextClosingByLength[iterator.length] = index
+                }
+            }
+        }
+        return result
     }
 
-    private fun canCloseInlineMath(dollarIterator: TokensCache.Iterator): Boolean {
-        val prevType = dollarIterator.rawLookup(-1)
-        if (prevType == null || isWhitespace(prevType)) return false
-        val charAfter = dollarIterator.charLookup(1)
-        if (charAfter in '0'..'9') return false
-        return true
+    private fun canOpenMath(iterator: TokensCache.Iterator): Boolean {
+        val previous = iterator.charLookup(-1)
+        if (previous.isWordCharacter() || isPunctuation(previous)) {
+            return false
+        }
+        return iterator.isBlockDelimiter() || !isWhitespace(iterator.charLookup(1))
     }
 
-    private fun isWhitespace(type: IElementType): Boolean {
-        return type == MarkdownTokenTypes.WHITE_SPACE
-                || type == MarkdownTokenTypes.EOL
-                || type == MarkdownTokenTypes.HARD_LINE_BREAK
+    private fun canCloseMath(iterator: TokensCache.Iterator): Boolean {
+        if (iterator.charLookup(1).isWordCharacter()) {
+            return false
+        }
+        return iterator.isBlockDelimiter() || !isWhitespace(iterator.charLookup(-1))
     }
 
-    private fun findClosingDollar(it: TokensCache.Iterator, length: Int, isBlock: Boolean): TokensCache.Iterator? {
-        var iterator = it
-        var hasContent = false
+    /**
+     * A `$$` delimiter starts a block, not a flanking run.
+     * GFM permits a space or a new line inside `$$ ... $$`, so a block delimiter
+     * does not check the adjacent character for a white space.
+     */
+    private fun TokensCache.Iterator.isBlockDelimiter(): Boolean {
+        return length > 1
+    }
+
+    private fun collectLinkRanges(tokens: TokensCache, rangesToGlue: List<IntRange>): List<IntRange> {
+        val result = ArrayList<IntRange>()
+        val scanIndex by lazy { LinkParserUtil.ScanIndex(tokens, rangesToGlue) }
+        var iterator: TokensCache.Iterator = tokens.RangesListIterator(rangesToGlue)
+
         while (iterator.type != null) {
-            if (iterator.type == GFMTokenTypes.DOLLAR) {
-                if (iterator.length == length && hasContent && (isBlock || canCloseInlineMath(iterator))) {
-                    return iterator
+            if (iterator.type == MarkdownTokenTypes.LBRACKET) {
+                val link = InlineLinkParser.parseInlineLink(iterator, scanIndex = scanIndex)
+                        ?: ReferenceLinkParser.parseReferenceLink(iterator, scanIndex)
+                if (link != null) {
+                    result.add(iterator.index..link.iteratorPosition.index)
+                    iterator = link.iteratorPosition.advance()
+                    continue
                 }
-                if (!isBlock && iterator.length <= length) {
-                    return null
-                }
-            } else {
-                hasContent = true
             }
             iterator = iterator.advance()
         }
-        return null
+        return result
+    }
+
+    private fun Char.isWordCharacter(): Boolean {
+        return isLetterOrDigit() || this == '_'
     }
 }

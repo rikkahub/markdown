@@ -1,6 +1,7 @@
 package org.intellij.markdown.flavours.gfm
 
 import org.intellij.markdown.MarkdownElementTypes
+import org.intellij.markdown.MarkdownTokenTypes
 import org.intellij.markdown.ast.*
 import org.intellij.markdown.ast.impl.ListCompositeNode
 import org.intellij.markdown.ast.impl.ListItemCompositeNode
@@ -10,6 +11,31 @@ import org.intellij.markdown.html.InlineHolderGeneratingProvider
 import org.intellij.markdown.html.SimpleTagProvider
 import org.intellij.markdown.html.entities.EntityConverter
 import org.intellij.markdown.lexer.Compat.assert
+
+private val DISALLOWED_RAW_HTML_TAG = Regex(
+    "</?(?:title|textarea|style|xmp|iframe|noembed|noframes|script|plaintext)(?=\\s|/?>|$)",
+    RegexOption.IGNORE_CASE
+)
+
+internal fun filterDisallowedRawHtml(html: CharSequence): CharSequence =
+    DISALLOWED_RAW_HTML_TAG.replace(html) { "&lt;${it.value.substring(1)}" }
+
+internal object GFMInlineHtmlGeneratingProvider : GeneratingProvider {
+    override fun processNode(visitor: HtmlGenerator.HtmlGeneratingVisitor, text: String, node: ASTNode) {
+        visitor.consumeHtml(filterDisallowedRawHtml(node.getTextInNode(text)))
+    }
+}
+
+internal object GFMHtmlBlockGeneratingProvider : GeneratingProvider {
+    override fun processNode(visitor: HtmlGenerator.HtmlGeneratingVisitor, text: String, node: ASTNode) {
+        for (child in node.children) {
+            if (child.type in listOf(MarkdownTokenTypes.EOL, MarkdownTokenTypes.HTML_BLOCK_CONTENT)) {
+                visitor.consumeHtml(filterDisallowedRawHtml(child.getTextInNode(text)))
+            }
+        }
+        visitor.consumeHtml("\n")
+    }
+}
 
 internal class CheckedListItemGeneratingProvider : SimpleTagProvider("li") {
     override fun openTag(visitor: HtmlGenerator.HtmlGeneratingVisitor, text: String, node: ASTNode) {
@@ -130,6 +156,22 @@ open class TableAwareCodeSpanGeneratingProvider : GeneratingProvider {
         val nodeText = node.getTextInNode(text).toString()
         val escaped = nodeText.replace("\\|", "|")
         return EntityConverter.replaceEntities(escaped, processEntities = false, processEscapes = false)
+    }
+}
+
+/**
+ * A `>` at the start of a GFM table cell is lexed as a [MarkdownTokenTypes.BLOCK_QUOTE] marker token, but block
+ * quotes are not allowed inside table cells. [HtmlGenerator.leafText] blanks out block-quote marker tokens, so
+ * without special handling the `>` would disappear from the rendered cell. Inside a table cell we render the marker
+ * as literal text; anywhere else we keep the default behaviour of dropping the marker.
+ */
+open class TableAwareBlockQuoteMarkerProvider : GeneratingProvider {
+    override fun processNode(visitor: HtmlGenerator.HtmlGeneratingVisitor, text: String, node: ASTNode) {
+        if (node.getParentOfType(GFMTokenTypes.CELL) == null) {
+            return
+        }
+        val markerText = node.getTextInNode(text).trimStart()
+        visitor.consumeHtml(EntityConverter.replaceEntities(markerText, processEntities = false, processEscapes = false))
     }
 }
 

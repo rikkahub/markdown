@@ -129,6 +129,18 @@ class MarkdownParsingTest : TestCase() {
     }
 
     @Test
+    fun testBlockQuoteContinuationMarkers() {
+        defaultTest()
+        defaultTest(GFMFlavourDescriptor())
+    }
+
+    @Test
+    fun testBlockQuoteNoLazyContinuation() {
+        defaultTest(NonLazyBlockQuoteCommonMarkFlavour())
+        defaultTest(NonLazyBlockQuoteGfmFlavour())
+    }
+
+    @Test
     fun testHeaders() {
         defaultTest()
     }
@@ -226,12 +238,27 @@ class MarkdownParsingTest : TestCase() {
     }
 
     @Test
+    fun testHighlight() {
+        defaultTest(GFMFlavourDescriptor())
+    }
+
+    @Test
     fun testGfmAutolink() {
         defaultTest(GFMFlavourDescriptor())
     }
 
     @Test
+    fun testGfmAutolinkWithUsername() {
+        defaultTest(GFMFlavourDescriptor())
+    }
+
+    @Test
     fun testSfmAutolink() {
+        defaultTest(SFMFlavourDescriptor())
+    }
+
+    @Test
+    fun testSfmAutolinkWithUsername() {
         defaultTest(SFMFlavourDescriptor())
     }
 
@@ -242,6 +269,16 @@ class MarkdownParsingTest : TestCase() {
 
     @Test
     fun testGfmTable() {
+        defaultTest(GFMFlavourDescriptor())
+    }
+
+    @Test
+    fun testGfmTableWithBlockQuote() {
+        defaultTest(GFMFlavourDescriptor())
+    }
+
+    @Test
+    fun testGfmAlerts() {
         defaultTest(GFMFlavourDescriptor())
     }
 
@@ -344,12 +381,45 @@ Markdown:MARKDOWN_FILE
     }
 
     @Test
+    fun testTableInsideOrderedListItem() {
+        defaultTest(GFMFlavourDescriptor())
+    }
+
+    @Test
+    fun testTableInsideUnorderedListItem() {
+        defaultTest(GFMFlavourDescriptor())
+    }
+
+    @Test
+    fun testTableInsideNestedListItem() {
+        defaultTest(GFMFlavourDescriptor())
+    }
+
+    @Test
+    fun testTableInsideBlockQuoteInListItem() {
+        defaultTest(GFMFlavourDescriptor())
+    }
+
+    @Test
+    fun testIndentedCodeBlockInsideListItem() {
+        defaultTest(GFMFlavourDescriptor())
+    }
+
+    @Test
     fun testMath() {
         defaultTest(GFMFlavourDescriptor())
     }
 
     @Test
     fun testBrokenTable() {
+        defaultTest(GFMFlavourDescriptor())
+    }
+
+    // IJPL-172056: a character without a special meaning inside a destination
+    // should not split the destination into several TEXT tokens
+    @Test
+    fun testLinkDestinationWithSpecialCharacters() {
+        defaultTest()
         defaultTest(GFMFlavourDescriptor())
     }
 

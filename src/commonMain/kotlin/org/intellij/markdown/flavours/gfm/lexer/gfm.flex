@@ -169,6 +169,10 @@ import org.intellij.markdown.lexer.GeneratedLexer;
       return balance;
   }
 
+  private boolean isAlphanumeric(char c) {
+      return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9';
+  }
+
   private void pushbackAutolink() {
       int length = yylength();
       if (yycharat(length - 1) == '/') {
@@ -180,9 +184,10 @@ import org.intellij.markdown.lexer.GeneratedLexer;
       int balance = -1;
 
       // See GFM_AUTOLINK rule
-      String badEnding = ".,:;!?\"'*_~]`";
+      String badEnding = ".,:!?\"'*_~]`";
 
-      for (int i = length - 1; i >= 0; --i) {
+      int i = length - 1;
+      while (i >= 0) {
           char c = yycharat(i);
           if (c == ')') {
               if (balance == -1) {
@@ -197,11 +202,23 @@ import org.intellij.markdown.lexer.GeneratedLexer;
                   break;
               }
           }
+          else if (c == ';') {
+              // A trailing entity reference ('&' followed by alphanumerics and this ';')
+              // is excluded from the autolink as a whole, not just the semicolon
+              int entityStart = i - 1;
+              while (entityStart >= 0 && isAlphanumeric(yycharat(entityStart))) {
+                  entityStart--;
+              }
+              if (entityStart >= 0 && entityStart < i - 1 && yycharat(entityStart) == '&') {
+                  i = entityStart;
+              }
+          }
           else if (badEnding.indexOf(c) == -1) {
               break;
           }
 
-          length--;
+          length = i;
+          i--;
       }
 
       yypushback(yylength() - length);
@@ -238,13 +255,15 @@ TAG_END = "</" {TAG_NAME} {WHITE_SPACE}* ">"
 
 SCHEME = [a-zA-Z]+
 AUTOLINK = "<" {SCHEME} ":" [^ \t\f\n<>]+ ">"
-EMAIL_AUTOLINK = "<" [a-zA-Z0-9.!#$%&'*+/=?\^_`{|}~-]+ "@"[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])? (\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)* ">"
+USER_INFO_CHAR =     [a-zA-Z0-9.!#$%&'*+/=?\^_`{|}~-]
+URL_USER_INFO_CHAR = [a-zA-Z0-9.!#$%&'*+/=?\^_`{|}~:-]
+EMAIL_AUTOLINK = "<" {USER_INFO_CHAR}+ "@"[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])? (\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)* ">"
 
-HOST_PART={ALPHANUM}([a-zA-Z0-9_-]*{ALPHANUM})?
+HOST_PART={ALPHANUM}(({ALPHANUM}|[_-])*{ALPHANUM})?
 PATH_PART=[\S&&[^\]()<]]|\][^\[(<]
 PATH=({PATH_PART}+ | ("(" {PATH_PART}* ")"? {PATH_PART}*)) ("(" {PATH_PART}* ")"? {PATH_PART}*)*
 // See pushbackAutolink method
-GFM_AUTOLINK = (("http" "s"? | "ftp" | "file")"://" | "www.") {HOST_PART} ("." {HOST_PART})* (":" [0-9]+)? ("/" {PATH})? "/"?
+GFM_AUTOLINK = (("http" "s"? | "ftp" | "file")"://" | "www.") ({URL_USER_INFO_CHAR}+ "@")? {HOST_PART} ("." {HOST_PART})* (":" [0-9]+)? ("/" {PATH})? "/"?
 
 %state TAG_START, AFTER_LINE_START, PARSE_DELIMITED, CODE_SPAN
 
@@ -270,7 +289,7 @@ GFM_AUTOLINK = (("http" "s"? | "ftp" | "file")"://" | "www.") {HOST_PART} ("." {
 
 <AFTER_LINE_START, PARSE_DELIMITED> {
   // Escaping
-  \\[\\\"'`*_{}\[\]()#+.,!:@#$%&~<>/-] {
+  \\[\\\"'`*_{}\[\]()#+.,!:@#$%&~<>/=-] {
     return getReturnGeneralized(MarkdownTokenTypes.TEXT);
   }
 
@@ -317,6 +336,10 @@ GFM_AUTOLINK = (("http" "s"? | "ftp" | "file")"://" | "www.") {HOST_PART} ("." {
 
   "~" {
     return getReturnGeneralized(GFMTokenTypes.TILDE);
+  }
+
+  "=" {
+    return getReturnGeneralized(GFMTokenTypes.EQUALS);
   }
 
   {AUTOLINK} { return parseDelimited(MarkdownTokenTypes.AUTOLINK, false); }

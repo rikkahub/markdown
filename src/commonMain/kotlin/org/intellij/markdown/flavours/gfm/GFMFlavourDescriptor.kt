@@ -28,13 +28,39 @@ import org.intellij.markdown.parser.sequentialparsers.impl.*
  * `false` otherwise
  *
  * @param makeHttpsAutoLinks enables use of HTTPS schema for auto links.
+ *
+ * @param useTagFilter `true` if the GFM tagfilter extension should be applied when rendering raw HTML and `false`
+ * otherwise. When enabled, the leading `<` of the disallowed raw HTML tags (`title`, `textarea`, `style`, `xmp`,
+ * `iframe`, `noembed`, `noframes`, `script`, `plaintext`) is replaced with `&lt;`.
+ * See [Disallowed Raw HTML (extension)](https://github.github.com/gfm/#disallowed-raw-html-extension-)
+ *
+ * @param lazyContinuation `true` if an unmarked line may continue a paragraph inside a block quote.
  */
 open class GFMFlavourDescriptor(
         useSafeLinks: Boolean = true,
         absolutizeAnchorLinks: Boolean = false,
-        private val makeHttpsAutoLinks: Boolean = false
+        private val makeHttpsAutoLinks: Boolean = false,
+        private val useTagFilter: Boolean = false,
+        private val lazyContinuation: Boolean = true,
 ) : CommonMarkFlavourDescriptor(useSafeLinks, absolutizeAnchorLinks) {
-    override val markerProcessorFactory: MarkerProcessorFactory = GFMMarkerProcessor.Factory
+    /**
+     * For ABI compatibility.
+     */
+    constructor(
+            useSafeLinks: Boolean = true,
+            absolutizeAnchorLinks: Boolean = false,
+            makeHttpsAutoLinks: Boolean = false
+    ) : this(useSafeLinks, absolutizeAnchorLinks, makeHttpsAutoLinks, useTagFilter = false)
+
+    constructor(
+            useSafeLinks: Boolean = true,
+            absolutizeAnchorLinks: Boolean = false,
+            makeHttpsAutoLinks: Boolean = false,
+            useTagFilter: Boolean = false,
+    ) : this(useSafeLinks, absolutizeAnchorLinks, makeHttpsAutoLinks, useTagFilter, lazyContinuation = true)
+
+    override val markerProcessorFactory: MarkerProcessorFactory =
+            GFMMarkerProcessor.Factory.withLazyContinuation(lazyContinuation)
 
     override fun createInlinesLexer(): MarkdownLexer {
         return MarkdownLexer(_GFMLexer())
@@ -48,22 +74,34 @@ open class GFMFlavourDescriptor(
                     ImageParser(),
                     InlineLinkParser(),
                     ReferenceLinkParser(),
-                    EmphasisLikeParser(EmphStrongDelimiterParser(), StrikeThroughDelimiterParser()))
+                    EmphasisLikeParser(EmphStrongDelimiterParser(), StrikeThroughDelimiterParser(), HighlightDelimiterParser()))
         }
     }
 
     override fun createHtmlGeneratingProviders(linkMap: LinkMap,
                                                baseURI: URI?): Map<IElementType, GeneratingProvider> {
-        return super.createHtmlGeneratingProviders(linkMap, baseURI) + hashMapOf(
+        val tagFilterProviders: Map<IElementType, GeneratingProvider> = if (useTagFilter) {
+            hashMapOf(
+                    MarkdownElementTypes.HTML_BLOCK to GFMHtmlBlockGeneratingProvider,
+                    MarkdownTokenTypes.HTML_TAG to GFMInlineHtmlGeneratingProvider
+            )
+        } else {
+            emptyMap()
+        }
+
+        return super.createHtmlGeneratingProviders(linkMap, baseURI) + tagFilterProviders + hashMapOf(
                 GFMElementTypes.STRIKETHROUGH to object : EqualDelimiterTrimmingInlineTagProvider("span", GFMTokenTypes.TILDE) {
                     override fun openTag(visitor: HtmlGenerator.HtmlGeneratingVisitor, text: String, node: ASTNode) {
                         visitor.consumeTagOpen(node, tagName, "class=\"user-del\"")
                     }
                 },
 
+                GFMElementTypes.HIGHLIGHT to EqualDelimiterTrimmingInlineTagProvider("mark", GFMTokenTypes.EQUALS),
+
                 GFMElementTypes.TABLE to TablesGeneratingProvider(),
 
                 GFMTokenTypes.CELL to TrimmingInlineHolderProvider(),
+                MarkdownTokenTypes.BLOCK_QUOTE to TableAwareBlockQuoteMarkerProvider(),
                 MarkdownElementTypes.CODE_SPAN to TableAwareCodeSpanGeneratingProvider(),
 
                 GFMTokenTypes.GFM_AUTOLINK to object : GeneratingProvider {

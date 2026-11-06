@@ -6,6 +6,7 @@ import org.intellij.markdown.parser.ProductionHolder
 import org.intellij.markdown.parser.constraints.MarkdownConstraints
 import org.intellij.markdown.parser.constraints.eatItselfFromString
 import org.intellij.markdown.parser.constraints.extendsPrev
+import org.intellij.markdown.parser.constraints.isInListItem
 import org.intellij.markdown.parser.markerblocks.MarkerBlock
 import org.intellij.markdown.parser.markerblocks.MarkerBlockProvider
 import org.intellij.markdown.parser.markerblocks.impl.SetextHeaderMarkerBlock
@@ -19,6 +20,10 @@ class SetextHeaderProvider : MarkerBlockProvider<MarkerProcessor.StateInfo> {
         }
         val currentConstaints = stateInfo.currentConstraints
         if (stateInfo.nextConstraints != currentConstaints) {
+            return emptyList()
+        }
+        // An ATX heading can't be the content of a setext heading
+        if (ATX_HEADER_PROVIDER.interruptsParagraph(pos, currentConstaints)) {
             return emptyList()
         }
         if (MarkerBlockProvider.isStartOfLineWithConstraints(pos, currentConstaints)
@@ -37,7 +42,11 @@ class SetextHeaderProvider : MarkerBlockProvider<MarkerProcessor.StateInfo> {
         val line = pos.nextLine ?: return null
         val nextLineConstraints = constraints.applyToNextLine(pos.nextLinePosition())
         if (nextLineConstraints.extendsPrev(constraints)) {
-            return nextLineConstraints.eatItselfFromString(line)
+            val content = nextLineConstraints.eatItselfFromString(line)
+            if (nextLineConstraints.isInListItem() && content.trim().contentEquals("-")) {
+                return null
+            }
+            return content
         } else {
             return null
         }
@@ -45,5 +54,7 @@ class SetextHeaderProvider : MarkerBlockProvider<MarkerProcessor.StateInfo> {
 
     companion object {
         val REGEX: Regex = Regex("^ {0,3}(-+|=+) *$")
+
+        private val ATX_HEADER_PROVIDER = AtxHeaderProvider()
     }
 }

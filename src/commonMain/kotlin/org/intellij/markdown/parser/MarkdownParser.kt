@@ -1,3 +1,5 @@
+@file:Suppress("DeprecatedCallableAddReplaceWith")
+
 package org.intellij.markdown.parser
 
 import org.intellij.markdown.*
@@ -7,84 +9,238 @@ import org.intellij.markdown.ast.CompositeASTNode
 import org.intellij.markdown.ast.LeafASTNode
 import org.intellij.markdown.flavours.MarkdownFlavourDescriptor
 import org.intellij.markdown.flavours.gfm.GFMTokenTypes
+import org.intellij.markdown.lexer.Compat.assert
+import org.intellij.markdown.parser.markerblocks.MarkerBlock
 import org.intellij.markdown.parser.sequentialparsers.LexerBasedTokensCache
 import org.intellij.markdown.parser.sequentialparsers.SequentialParser
 import org.intellij.markdown.parser.sequentialparsers.SequentialParserUtil
 
-class MarkdownParser @ExperimentalApi constructor(
+class MarkdownParser(
     private val flavour: MarkdownFlavourDescriptor,
     private val assertionsEnabled: Boolean = true,
     private val cancellationToken: CancellationToken = CancellationToken.NonCancellable
 ) {
+    @Deprecated("Use constructor with CancellationToken")
     constructor(flavour: MarkdownFlavourDescriptor): this(flavour, true)
 
-    @OptIn(ExperimentalApi::class)
+    @Deprecated("Use constructor with CancellationToken")
     constructor(
         flavour: MarkdownFlavourDescriptor,
         assertionsEnabled: Boolean
     ): this(flavour, assertionsEnabled, CancellationToken.NonCancellable)
 
+    fun buildMarkdownTreeFromString(text: CharSequence, baseOffset: Int): ASTNode {
+        return parse(MarkdownElementTypes.MARKDOWN_FILE, text, true, baseOffset)
+    }
+
+    @Deprecated("Use the CharSequence overload")
+    fun buildMarkdownTreeFromString(text: String, baseOffset: Int): ASTNode {
+        return buildMarkdownTreeFromString(text as CharSequence, baseOffset)
+    }
+
+    // To keep the ABI compatibility.
+    fun buildMarkdownTreeFromString(text: CharSequence): ASTNode {
+        return buildMarkdownTreeFromString(text, 0)
+    }
+
+    // To keep the ABI compatibility.
+    @Deprecated("Use the CharSequence overload")
     fun buildMarkdownTreeFromString(text: String): ASTNode {
-        return parse(MarkdownElementTypes.MARKDOWN_FILE, text, true)
+        return buildMarkdownTreeFromString(text as CharSequence)
     }
 
+    fun parse(root: IElementType, text: CharSequence, parseInlines: Boolean, baseOffset: Int): ASTNode {
+        return try {
+            doParse(root, text, parseInlines, baseOffset).tree
+        }
+        catch (e: MarkdownParsingException) {
+            if (assertionsEnabled)
+                throw e
+            else
+                topLevelFallback(root, text, baseOffset)
+        }
+    }
+
+    @Deprecated("Use the CharSequence overload")
+    fun parse(root: IElementType, text: String, parseInlines: Boolean, baseOffset: Int): ASTNode {
+        return parse(root, text as CharSequence, parseInlines, baseOffset)
+    }
+
+    fun parse(root: IElementType, text: CharSequence, parseInlines: Boolean = true): ASTNode {
+        return parse(root, text, parseInlines, 0)
+    }
+
+    // To keep the ABI compatibility.
+    @Deprecated("Use the CharSequence overload")
     fun parse(root: IElementType, text: String, parseInlines: Boolean = true): ASTNode {
+        return parse(root, text as CharSequence, parseInlines)
+    }
+
+    fun parseInline(root: IElementType, text: CharSequence, textStart: Int, textEnd: Int, baseOffset: Int): ASTNode {
         return try {
-            doParse(root, text, parseInlines)
+            doParseInline(root, text, textStart, textEnd, baseOffset)
         }
         catch (e: MarkdownParsingException) {
             if (assertionsEnabled)
                 throw e
             else
-                topLevelFallback(root, text)
+                inlineFallback(root, textStart, textEnd, baseOffset)
         }
     }
 
+    // To keep the ABI compatibility.
     fun parseInline(root: IElementType, text: CharSequence, textStart: Int, textEnd: Int): ASTNode {
+        return parseInline(root, text, textStart, textEnd, 0)
+    }
+
+    /**
+     * Parses one top-level block of [text] from [startOffset] with `parseInlines = false`.
+     * The parse stops at the next line start where no block is open. [startOffset] must be such a line start too.
+     * An assertion is raised if [startOffset] is not a line start.
+     * The children of the result are the same as the children of a full parse in that range.
+     * The [ASTNode.endOffset] can be used as `startOffset` of the next call.
+     */
+    fun parseBlock(text: CharSequence, startOffset: Int): ASTNode {
+        require(startOffset < text.length) { "Nothing to parse at $startOffset in a text of ${text.length} chars" }
+        assert(startOffset == 0 || (startOffset > 0 && text[startOffset - 1] == '\n')) {
+            "startOffset must be at the start of a line"
+        }
+        val root = MarkdownElementTypes.MARKDOWN_FILE
         return try {
-            doParseInline(root, text, textStart, textEnd)
+            doParse(root, text, parseInlines = false, startOffset = startOffset, stopAtNextBlock = true).tree
         }
         catch (e: MarkdownParsingException) {
             if (assertionsEnabled)
                 throw e
             else
-                inlineFallback(root, textStart, textEnd)
+                topLevelFallback(root, text.subSequence(startOffset, text.length), startOffset)
         }
     }
 
-    @OptIn(ExperimentalApi::class)
-    private fun doParse(root: IElementType, text: String, parseInlines: Boolean = true): ASTNode {
-        val productionHolder = ProductionHolder()
-        val markerProcessor = flavour.markerProcessorFactory.createMarkerProcessor(productionHolder)
-
-        val rootMarker = productionHolder.mark()
-
-        val textHolder = LookaheadText(text)
-        var pos: LookaheadText.Position? = textHolder.startPosition
-        while (pos != null) {
-            cancellationToken.checkCancelled()
-            productionHolder.updatePosition(pos.offset)
-            pos = markerProcessor.processPosition(pos)
+    internal fun parseStreaming(root: IElementType, text: CharSequence, parseInlines: Boolean, baseOffset: Int): StreamingMarkdownParseResult {
+        return try {
+            val (tree, openMarkers) = doParse(root, text, parseInlines, baseOffset)
+            StreamingMarkdownParseResult(
+                tree = tree,
+                unstableStartOffset = keepTrailingCodeBlockOpen(
+                    tree,
+                    keepTrailingListOpen(tree, keepNodesWhole(tree, findUnstableStartOffset(openMarkers, text, baseOffset)))
+                )
+            )
         }
+        catch (e: MarkdownParsingException) {
+            if (assertionsEnabled) {
+                throw e
+            } else {
+                StreamingMarkdownParseResult(
+                    tree = topLevelFallback(root, text, baseOffset),
+                    unstableStartOffset = baseOffset
+                )
+            }
+        }
+    }
 
-        productionHolder.updatePosition(text.length)
-        markerProcessor.flushMarkers()
-
-        rootMarker.done(root)
+    private fun doParse(
+        root: IElementType,
+        text: CharSequence,
+        parseInlines: Boolean = true,
+        baseOffset: Int = 0,
+        startOffset: Int = 0,
+        stopAtNextBlock: Boolean = false
+    ): MarkdownParseResult {
+        val productionHolder = ProductionHolder()
+        val openMarkers = collectBlockProduction(
+            flavour = flavour,
+            root = root,
+            text = text,
+            startOffset = startOffset,
+            stopAtNextBlock = stopAtNextBlock,
+            productionHolder = productionHolder,
+            cancellationToken = cancellationToken
+        )
 
         val nodeBuilder = if (parseInlines) {
-            InlineExpandingASTNodeBuilder(text)
+            InlineExpandingASTNodeBuilder(text, baseOffset)
         } else {
-            ASTNodeBuilder(text)
+            ASTNodeBuilder(text, cancellationToken, baseOffset)
         }
 
-        val builder = TopLevelBuilder(nodeBuilder)
+        val builder = TopLevelBuilder(nodeBuilder, cancellationToken)
 
-        return builder.buildTree(productionHolder.production)
+        return MarkdownParseResult(
+            tree = builder.buildTree(productionHolder.production),
+            openMarkers = openMarkers
+        )
     }
 
-    @OptIn(ExperimentalApi::class)
-    private fun doParseInline(root: IElementType, text: CharSequence, textStart: Int, textEnd: Int): ASTNode {
+    /**
+     * This handles 2 cases:
+     *
+     * For code blocks/HTML blocks, the internal [MarkerBlock]s are snapshoted before [MarkerProcessor.flushMarkers] to find the unenclosed block and decide the unstable boundary.
+     * For other cases, the last blank line is used to decide the unstable boundary.
+     */
+    private fun findUnstableStartOffset(
+        openMarkers: List<MarkerBlock>,
+        text: CharSequence,
+        baseOffset: Int
+    ): Int {
+        var unstableStartOffset = text.length
+        @OptIn(ExperimentalApi::class)
+        val firstOpenMarkerOffset = openMarkers.minOfOrNull { it.startOffset }
+        firstOpenMarkerOffset?.let { unstableStartOffset = minOf(it, unstableStartOffset) }
+        val lastBlankLineEnd = text.lastBlankLineEndOrNull() ?: 0
+        unstableStartOffset = minOf(lastBlankLineEnd, unstableStartOffset)
+        return unstableStartOffset + baseOffset
+    }
+
+    /**
+     * [StreamingMarkdownFile] splits the children of [tree] at [offset], so a child spanning it would end up on
+     * neither side. A closed block that contains a blank line, such as a fenced code block, can span the offset
+     * found by [findUnstableStartOffset]; move the offset back to where that block starts.
+     */
+    private fun keepNodesWhole(tree: ASTNode, offset: Int): Int =
+        tree.children.firstOrNull { it.startOffset < offset && offset < it.endOffset }?.startOffset ?: offset
+
+    /**
+     * A list at the end of the text is closed only because the text ends, and the block after it can still change
+     * (`2` is a paragraph until `2. ` arrives). Keep the boundary before the last list until that block has settled.
+     */
+    private fun keepTrailingListOpen(tree: ASTNode, offset: Int): Int {
+        val blocks = tree.children.filter {
+            it.type != MarkdownTokenTypes.EOL && it.type != MarkdownTokenTypes.WHITE_SPACE
+        }
+        val lastList = blocks.lastOrNull {
+            it.type == MarkdownElementTypes.ORDERED_LIST || it.type == MarkdownElementTypes.UNORDERED_LIST
+        } ?: return offset
+        val following = blocks.firstOrNull { it.startOffset >= lastList.endOffset }
+        return if (following != null && offset > following.endOffset) offset else minOf(offset, lastList.startOffset)
+    }
+
+    /** An indented code block can continue after trailing blank lines when more text is appended. */
+    private fun keepTrailingCodeBlockOpen(tree: ASTNode, offset: Int): Int {
+        val lastBlock = tree.children.lastOrNull {
+            it.type != MarkdownTokenTypes.EOL && it.type != MarkdownTokenTypes.WHITE_SPACE
+        } ?: return offset
+        return if (lastBlock.type == MarkdownElementTypes.CODE_BLOCK) {
+            minOf(offset, lastBlock.startOffset)
+        } else {
+            offset
+        }
+    }
+
+    /**
+     * Return the exclusive end of the last blank line in the string. As in the block parser, only spaces and tabs make
+     * a line blank; a line holding other whitespace, such as `\r`, does not end a block.
+     * This guarantees O(1) memory usage and O(n) worst-case time complexity.
+     */
+    private tailrec fun CharSequence.lastBlankLineEndOrNull(lineEnd: Int = lastIndexOf('\n')): Int? {
+        val lastLineEnd = lastIndexOf('\n', lineEnd - 1)
+        if (lastLineEnd == -1) return null
+        if ((lastLineEnd + 1 until lineEnd).all { this[it] == ' ' || this[it] == '\t' }) return lineEnd + 1
+        return lastBlankLineEndOrNull(lastLineEnd)
+    }
+
+    private fun doParseInline(root: IElementType, text: CharSequence, textStart: Int, textEnd: Int, baseOffset: Int = 0): ASTNode {
         val lexer = flavour.createInlinesLexer()
         lexer.start(text, textStart, textEnd)
         val tokensCache = LexerBasedTokensCache(lexer)
@@ -96,34 +252,56 @@ class MarkdownParser @ExperimentalApi constructor(
             cancellationToken = cancellationToken
         )
 
-        val builder = InlineBuilder(ASTNodeBuilder(text, cancellationToken), tokensCache, cancellationToken)
+        val builder = InlineBuilder(ASTNodeBuilder(text, cancellationToken, baseOffset), tokensCache, cancellationToken)
         return builder.buildTree(nodes + listOf(SequentialParser.Node(wholeRange, root)))
     }
 
-    private fun topLevelFallback(root: IElementType, text: String): ASTNode {
+    private fun topLevelFallback(root: IElementType, text: CharSequence, baseOffset: Int): ASTNode {
         return CompositeASTNode(
-            root, listOf(inlineFallback(MarkdownElementTypes.PARAGRAPH, 0, text.length))
+            root, listOf(inlineFallback(MarkdownElementTypes.PARAGRAPH, 0, text.length, baseOffset))
         )
     }
 
-    private fun inlineFallback(root: IElementType, textStart: Int, textEnd: Int): ASTNode {
+    private fun inlineFallback(root: IElementType, textStart: Int, textEnd: Int, baseOffset: Int): ASTNode {
         return CompositeASTNode(
             root,
-            listOf(LeafASTNode(MarkdownTokenTypes.TEXT, textStart, textEnd))
+            listOf(LeafASTNode(MarkdownTokenTypes.TEXT, textStart + baseOffset, textEnd + baseOffset))
         )
     }
 
-    private inner class InlineExpandingASTNodeBuilder(text: CharSequence) : ASTNodeBuilder(text) {
+    private inner class InlineExpandingASTNodeBuilder(
+        text: CharSequence,
+        private val baseOffset: Int
+    ) : ASTNodeBuilder(text, cancellationToken, baseOffset) {
         override fun createLeafNodes(type: IElementType, startOffset: Int, endOffset: Int): List<ASTNode> {
             return when (type) {
-                MarkdownElementTypes.PARAGRAPH,
-                MarkdownTokenTypes.ATX_CONTENT,
-                MarkdownTokenTypes.SETEXT_CONTENT,
-                GFMTokenTypes.CELL ->
-                    listOf(parseInline(type, text, startOffset, endOffset))
+                in INLINE_CONTENT_TYPES ->
+                    listOf(parseInline(type, text, startOffset, endOffset, baseOffset))
                 else ->
                     super.createLeafNodes(type, startOffset, endOffset)
             }
         }
     }
+
+    companion object {
+        /**
+         * The types that hold inline content only. [parse] with `parseInlines` expands each of them at once.
+         */
+        val INLINE_CONTENT_TYPES: Set<IElementType> = setOf(
+            MarkdownElementTypes.PARAGRAPH,
+            MarkdownTokenTypes.ATX_CONTENT,
+            MarkdownTokenTypes.SETEXT_CONTENT,
+            GFMTokenTypes.CELL
+        )
+    }
 }
+
+internal data class MarkdownParseResult(
+    val tree: ASTNode,
+    val openMarkers: List<MarkerBlock>
+)
+
+internal data class StreamingMarkdownParseResult(
+    val tree: ASTNode,
+    val unstableStartOffset: Int
+)

@@ -20,6 +20,13 @@ class LinkReferenceDefinitionProvider : MarkerBlockProvider<MarkerProcessor.Stat
         }
 
         val matchResult = matchLinkDefinition(pos.originalText, pos.offset) ?: return emptyList()
+        val matchLength = matchResult.last().last - pos.offset + 1
+        val endPosition = pos.nextPosition(matchLength)
+
+        if (endPosition != null && !isEndOfLine(endPosition)) {
+            return emptyList()
+        }
+
         for ((i, range) in matchResult.withIndex()) {
             productionHolder.addProduction(listOf(SequentialParser.Node(
                     addToRangeAndWiden(range, 0), when (i) {
@@ -30,12 +37,6 @@ class LinkReferenceDefinitionProvider : MarkerBlockProvider<MarkerProcessor.Stat
             })))
         }
 
-        val matchLength = matchResult.last().last - pos.offset + 1
-        val endPosition = pos.nextPosition(matchLength)
-
-        if (endPosition != null && !isEndOfLine(endPosition)) {
-            return emptyList()
-        }
         return listOf(LinkReferenceDefinitionMarkerBlock(stateInfo.currentConstraints, productionHolder.mark(),
                 pos.offset + matchLength))
     }
@@ -45,6 +46,10 @@ class LinkReferenceDefinitionProvider : MarkerBlockProvider<MarkerProcessor.Stat
     }
 
     companion object {
+
+        // Caps label/destination/title scanning so a single unterminated construct can't force
+        // an unbounded scan of the rest of the line (or, for titles, the rest of the document).
+        private const val MAX_LINK_PART_LENGTH = 999
 
         fun addToRangeAndWiden(range: IntRange, t: Int): IntRange {
             return IntRange(range.first + t, range.last + t + 1)
@@ -93,6 +98,8 @@ class LinkReferenceDefinitionProvider : MarkerBlockProvider<MarkerProcessor.Stat
             if (text[offset] == '<') {
                 offset++
                 while (offset < text.length) {
+                    if (offset - start > MAX_LINK_PART_LENGTH)
+                        return null
                     val c = text[offset]
                     if (c == '>')
                         return IntRange(start, offset)
@@ -108,6 +115,8 @@ class LinkReferenceDefinitionProvider : MarkerBlockProvider<MarkerProcessor.Stat
             else {
                 var hasParens = false
                 while (offset < text.length) {
+                    if (offset - start > MAX_LINK_PART_LENGTH)
+                        return null
                     val c = text[offset]
                     if (isSpaceOrNewline(c) || c.code <= 27)
                         break
@@ -150,6 +159,8 @@ class LinkReferenceDefinitionProvider : MarkerBlockProvider<MarkerProcessor.Stat
             var offset = start + 1
             var isBlank = false
             while (offset < text.length) {
+                if (offset - start > MAX_LINK_PART_LENGTH)
+                    return null
                 val c = text[offset]
                 if (c == endDelim)
                     return IntRange(start, offset)
@@ -180,7 +191,7 @@ class LinkReferenceDefinitionProvider : MarkerBlockProvider<MarkerProcessor.Stat
 
             var seenNonWhitespace = false
 
-            for (i in 1..999) {
+            for (i in 1..MAX_LINK_PART_LENGTH) {
                 if (offset >= text.length)
                     return null
                 var c = text[offset]
@@ -192,6 +203,9 @@ class LinkReferenceDefinitionProvider : MarkerBlockProvider<MarkerProcessor.Stat
                         return null
                     c = text[offset]
                 }
+                // A link label stays in one paragraph, so a blank line ends it.
+                if (isEndOfLine(text, offset, c) && isBlankLine(text, offset + 1, MAX_LINK_PART_LENGTH - i))
+                    return null
                 if (!c.isWhitespace()) {
                     seenNonWhitespace = true
                 }
@@ -213,6 +227,26 @@ class LinkReferenceDefinitionProvider : MarkerBlockProvider<MarkerProcessor.Stat
                     offset++
             }
             return offset
+        }
+
+        private fun isEndOfLine(text: CharSequence, offset: Int, c: Char): Boolean {
+            if (c == '\n')
+                return true
+            return c == '\r' && (offset + 1 >= text.length || text[offset + 1] != '\n')
+        }
+
+        private fun isBlankLine(text: CharSequence, start: Int, maxLength: Int): Boolean {
+            val end = minOf(text.length, start + maxLength)
+            var offset = start
+            while (offset < end) {
+                val c = text[offset]
+                if (c == '\n' || c == '\r')
+                    return true
+                if (!isSpace(c))
+                    return false
+                offset++
+            }
+            return end == text.length
         }
 
         private inline fun isSpace(c: Char) = c == ' ' || c == '\t'

@@ -38,12 +38,16 @@ open class CommonMarkdownConstraints protected constructor(private val indents: 
     }
 
     override fun addModifierIfNeeded(pos: LookaheadText.Position?): CommonMarkdownConstraints? {
+        return addModifierIfNeeded(pos, false)
+    }
+
+    override fun addModifierIfNeeded(pos: LookaheadText.Position?, interruptsParagraph: Boolean): CommonMarkdownConstraints? {
         if (pos == null || pos.offsetInCurrentLine == -1)
             return null
         if (HorizontalRuleProvider.isHorizontalRule(pos.currentLine, pos.offsetInCurrentLine)) {
             return null
         }
-        return tryAddListItem(pos) ?: tryAddBlockQuote(pos)
+        return tryAddListItem(pos, interruptsParagraph) ?: tryAddBlockQuote(pos)
     }
 
     override fun applyToNextLine(pos: LookaheadText.Position?): CommonMarkdownConstraints {
@@ -52,68 +56,81 @@ open class CommonMarkdownConstraints protected constructor(private val indents: 
         }
         assert(pos.offsetInCurrentLine == -1) { "given $pos" }
 
-        val line = pos.currentLine
+        return continueOnLine(pos.currentLine, null)
+    }
+
+    /**
+     * Reports every block quote marker that [applyToNextLine] continues on [line] to [action] as the start
+     * (inclusive) and end (exclusive) offsets of the marker in [line]. A marker consists of up to 3 spaces
+     * of indentation, `>` and the space or tab that follows it, if that is a part of the constraints.
+     */
+    internal fun forEachContinuedBlockQuoteMarker(line: CharSequence, action: (start: Int, end: Int) -> Unit) {
+        continueOnLine(line, action)
+    }
+
+    private fun continueOnLine(line: CharSequence,
+                               onBlockQuoteMarker: ((start: Int, end: Int) -> Unit)?): CommonMarkdownConstraints {
         val prevN = indents.size
+        if (prevN == 0) {
+            return base
+        }
+
+        // The continued constraints are accumulated into these arrays and materialized exactly once at the end.
+        // Building them via `create` one item at a time would copy the arrays on every step, making a single call
+        // O(depth^2). Since every open block re-runs this for every line, that adds up to a cubic parse time
+        // on deeply nested lists/quotes.
+        val newIndents = IntArray(prevN)
+        val newTypes = CharArray(prevN)
+        val newExplicit = BooleanArray(prevN)
+        var newN = 0
+        var currentIndent = 0
+
+        var offset = 0
         var indexPrev = 0
 
-        val getBlockQuoteIndent = { startOffset: Int ->
-            var offset = startOffset
-            var blockQuoteIndent = 0
-
-            // '\t' can be omitted here since it'll add at least 4 indent
-            while (blockQuoteIndent < 3 && offset < line.length && line[offset] == ' ') {
-                blockQuoteIndent++
+        var column = 0
+        var spacesSeen = 0
+        val hasKMoreSpaces = { k: Int ->
+            val oldSpacesSeen = spacesSeen
+            val oldOffset = offset
+            val oldColumn = column
+            afterSpaces@
+            while (spacesSeen < k && offset < line.length) {
+                val deltaSpaces = when (line[offset]) {
+                    ' ' -> 1
+                    '\t' -> 4 - column % 4
+                    else -> break@afterSpaces
+                }
+                spacesSeen += deltaSpaces
+                column += deltaSpaces
                 offset++
             }
+            if (offset == line.length) {
+                spacesSeen = Int.MAX_VALUE
+            }
 
-            if (offset < line.length && line[offset] == BQ_CHAR) {
-                blockQuoteIndent + 1
+            if (k <= spacesSeen) {
+                spacesSeen -= k
+                true
             } else {
-                null
+                offset = oldOffset
+                spacesSeen = oldSpacesSeen
+                column = oldColumn
+                false
             }
         }
 
-        val fillMaybeBlockquoteAndListIndents = fun(constraints: CommonMarkdownConstraints): CommonMarkdownConstraints {
-            if (indexPrev >= prevN) {
-                return constraints
-            }
+        // Each round continues (at most) one blockquote marker followed by a run of list indents.
+        // Only the unconsumed whitespace is reset; tab stops are relative to the start of the line.
+        while (indexPrev < prevN) {
+            spacesSeen = 0
 
-            var offset = constraints.getCharsEaten(line)
-            var totalSpaces = 0
-            var spacesSeen = 0
-            val hasKMoreSpaces = { k: Int ->
-                val oldSpacesSeen = spacesSeen
-                val oldOffset = offset
-                afterSpaces@
-                while (spacesSeen < k && offset < line.length) {
-                    val deltaSpaces = when (line[offset]) {
-                        ' ' -> 1
-                        '\t' -> 4 - totalSpaces % 4
-                        else -> break@afterSpaces
-                    }
-                    spacesSeen += deltaSpaces
-                    totalSpaces += deltaSpaces
-                    offset++
-                }
-                if (offset == line.length) {
-                    spacesSeen = Int.MAX_VALUE
-                }
-
-                if (k <= spacesSeen) {
-                    spacesSeen -= k
-                    true
-                } else {
-                    offset = oldOffset
-                    spacesSeen = oldSpacesSeen
-                    false
-                }
-            }
-
+            val roundStart = offset
             val bqIndent: Int?
             if (types[indexPrev] == BQ_CHAR) {
-                bqIndent = getBlockQuoteIndent(offset)
-                        ?: return constraints
+                bqIndent = getBlockQuoteIndent(line, offset) ?: break
                 offset += bqIndent
+                column += bqIndent
                 indexPrev++
             } else {
                 bqIndent = null
@@ -121,42 +138,65 @@ open class CommonMarkdownConstraints protected constructor(private val indents: 
 
             val oldIndexPrev = indexPrev
             while (indexPrev < prevN && types[indexPrev] != BQ_CHAR) {
-                val deltaIndent = indents[indexPrev] -
-                        if (indexPrev == 0)
-                            0
-                        else
-                            indents[indexPrev - 1]
-
-                if (!hasKMoreSpaces(deltaIndent)) {
+                if (!hasKMoreSpaces(indentDelta(indexPrev))) {
                     break
                 }
-
                 indexPrev++
             }
 
-            var result = constraints
+            if (bqIndent == null && oldIndexPrev == indexPrev) {
+                break
+            }
+
             if (bqIndent != null) {
                 val bonusForTheBlockquote = if (hasKMoreSpaces(1)) 1 else 0
-                result = create(result, bqIndent + bonusForTheBlockquote, BQ_CHAR, true, offset)
+                if (onBlockQuoteMarker != null) {
+                    // Only spaces and tabs are eaten after the `>`, so the marker takes the one right after it
+                    val markerEnd = roundStart + bqIndent
+                    onBlockQuoteMarker(roundStart, if (offset > markerEnd) markerEnd + 1 else markerEnd)
+                }
+                currentIndent += bqIndent + bonusForTheBlockquote
+                newIndents[newN] = currentIndent
+                newTypes[newN] = BQ_CHAR
+                newExplicit[newN] = true
+                newN++
             }
             for (index in oldIndexPrev until indexPrev) {
-                val deltaIndent = indents[index] -
-                        if (index == 0)
-                            0
-                        else
-                            indents[index - 1]
-                result = create(result, deltaIndent, types[index], false, offset)
+                currentIndent += indentDelta(index)
+                newIndents[newN] = currentIndent
+                newTypes[newN] = types[index]
+                newExplicit[newN] = false
+                newN++
             }
-            return result
         }
 
-        var result = base
-        while (true) {
-            val nextConstraints = fillMaybeBlockquoteAndListIndents(result)
-            if (nextConstraints == result) {
-                return result
-            }
-            result = nextConstraints
+        if (newN == 0) {
+            return base
+        }
+        if (newN == prevN) {
+            return createNewConstraints(newIndents, newTypes, newExplicit, offset)
+        }
+        return createNewConstraints(newIndents.copyOf(newN), newTypes.copyOf(newN), newExplicit.copyOf(newN), offset)
+    }
+
+    private fun indentDelta(index: Int): Int {
+        return indents[index] - if (index == 0) 0 else indents[index - 1]
+    }
+
+    private fun getBlockQuoteIndent(line: CharSequence, startOffset: Int): Int? {
+        var offset = startOffset
+        var blockQuoteIndent = 0
+
+        // '\t' can be omitted here since it'll add at least 4 indent
+        while (blockQuoteIndent < 3 && offset < line.length && line[offset] == ' ') {
+            blockQuoteIndent++
+            offset++
+        }
+
+        return if (offset < line.length && line[offset] == BQ_CHAR) {
+            blockQuoteIndent + 1
+        } else {
+            null
         }
     }
 
@@ -169,11 +209,12 @@ open class CommonMarkdownConstraints protected constructor(private val indents: 
 
         val line = pos.currentLine
         var offset = pos.offsetInCurrentLine
-        while (offset < line.length && line[offset] in '0'..'9') {
+        val maxDigitsEnd = min(line.length, pos.offsetInCurrentLine + MAX_ORDERED_MARKER_DIGITS + 1)
+        while (offset < maxDigitsEnd && line[offset] in '0'..'9') {
             offset++
         }
         return if (offset > pos.offsetInCurrentLine
-                && offset - pos.offsetInCurrentLine <= 9
+                && offset - pos.offsetInCurrentLine <= MAX_ORDERED_MARKER_DIGITS
                 && offset < line.length
                 && (line[offset] == '.' || line[offset] == ')')) {
             ListMarkerInfo(offset + 1 - pos.offsetInCurrentLine,
@@ -187,7 +228,7 @@ open class CommonMarkdownConstraints protected constructor(private val indents: 
     protected data class ListMarkerInfo(val markerLength: Int, val markerType: Char, val markerIndent: Int)
 
 
-    private fun tryAddListItem(pos: LookaheadText.Position): CommonMarkdownConstraints? {
+    private fun tryAddListItem(pos: LookaheadText.Position, interruptsParagraph: Boolean): CommonMarkdownConstraints? {
         val line = pos.currentLine
 
         var offset = pos.offsetInCurrentLine
@@ -206,6 +247,14 @@ open class CommonMarkdownConstraints protected constructor(private val indents: 
         val markerInfo = fetchListMarker(pos.nextPosition(offset - pos.offsetInCurrentLine)!!)
                 ?: return null
 
+        // Only an ordered list starting with 1 may interrupt a paragraph. Read the
+        // number from the source because GFM may extend the marker with a checkbox.
+        if (interruptsParagraph && line[offset] in '0'..'9') {
+            var numberEnd = offset
+            while (numberEnd < line.length && line[numberEnd] in '0'..'9') numberEnd++
+            if (line.subSequence(offset, numberEnd).toString().toIntOrNull() != 1) return null
+        }
+
         offset += markerInfo.markerLength
         var spacesAfter = 0
 
@@ -219,6 +268,9 @@ open class CommonMarkdownConstraints protected constructor(private val indents: 
             }
             offset++
         }
+
+        val isNestedHyphen = markerInfo.markerType == '-' && isInListItem()
+        if (interruptsParagraph && offset == line.length && !isNestedHyphen) return null
 
         // By the classification http://spec.commonmark.org/0.20/#list-items
         // 1. Basic case
@@ -270,6 +322,8 @@ open class CommonMarkdownConstraints protected constructor(private val indents: 
         val BASE: CommonMarkdownConstraints = CommonMarkdownConstraints(IntArray(0), CharArray(0), BooleanArray(0), 0)
 
         const val BQ_CHAR: Char = '>'
+
+        private const val MAX_ORDERED_MARKER_DIGITS = 9
 
         private fun create(parent: CommonMarkdownConstraints,
                            newIndentDelta: Int,

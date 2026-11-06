@@ -20,9 +20,10 @@ Markdown:MARKDOWN_FILE
           WHITE_SPACE('  ')
         Markdown:TABLE_SEPARATOR('|')
       Markdown:EOL('\n')
-      Markdown:TABLE_SEPARATOR('> | ---   | ------ | ---- |')
+      Markdown:BLOCK_QUOTE('> ')
+      Markdown:TABLE_SEPARATOR('| ---   | ------ | ---- |')
       Markdown:EOL('\n')
-      WHITE_SPACE('> ')
+      Markdown:BLOCK_QUOTE('> ')
       Markdown:ROW
         Markdown:TABLE_SEPARATOR('|')
         Markdown:CELL
@@ -41,7 +42,7 @@ Markdown:MARKDOWN_FILE
           WHITE_SPACE('  ')
         Markdown:TABLE_SEPARATOR('|')
       Markdown:EOL('\n')
-      WHITE_SPACE('> ')
+      Markdown:BLOCK_QUOTE('> ')
       Markdown:ROW
         Markdown:TABLE_SEPARATOR('|')
         Markdown:CELL

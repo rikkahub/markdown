@@ -1,21 +1,23 @@
 package org.intellij.markdown.parser
 
-import org.intellij.markdown.ExperimentalApi
+import org.intellij.markdown.MarkdownElementTypes
+import org.intellij.markdown.MarkdownTokenTypes
 import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.ast.ASTNodeBuilder
+import org.intellij.markdown.flavours.gfm.GFMTokenTypes
 import org.intellij.markdown.lexer.Compat.assert
 import org.intellij.markdown.parser.sequentialparsers.TokensCache
 
-@OptIn(ExperimentalApi::class)
-class InlineBuilder @ExperimentalApi constructor(
+class InlineBuilder(
     nodeBuilder: ASTNodeBuilder,
     private val tokensCache: TokensCache,
     cancellationToken: CancellationToken
 ): TreeBuilder(nodeBuilder, cancellationToken) {
-    @OptIn(ExperimentalApi::class)
+    @Deprecated("Use constructor with CancellationToken")
     constructor(nodeBuilder: ASTNodeBuilder, tokensCache: TokensCache): this(nodeBuilder, tokensCache, CancellationToken.NonCancellable)
 
     private var currentTokenPosition = -1
+    private var linkDestinationDepth = 0
 
     override fun flushEverythingBeforeEvent(event: MyEvent, currentNodeChildren: MutableList<MyASTNodeWrapper>?) {
         if (currentTokenPosition == -1) {
@@ -26,12 +28,41 @@ class InlineBuilder @ExperimentalApi constructor(
             flushOneTokenToTree(tokensCache, currentNodeChildren, currentTokenPosition)
             currentTokenPosition++
         }
+
+        if (event.info.type == MarkdownElementTypes.LINK_DESTINATION) {
+            if (event.isStart()) {
+                linkDestinationDepth++
+            } else if (!event.isEmpty()) {
+                linkDestinationDepth--
+            }
+        }
     }
 
     private fun flushOneTokenToTree(tokensCache: TokensCache, currentNodeChildren: MutableList<MyASTNodeWrapper>?, currentTokenPosition: Int) {
         val iterator = tokensCache.Iterator(currentTokenPosition)
         assert(iterator.type != null)
-        val nodes = nodeBuilder.createLeafNodes(iterator.type!!, iterator.start, iterator.end)
+        val tokenType = iterator.type!!
+        val type = if (isLinkDestinationToken() && tokenType in DESTINATION_TEXT_TOKENS) {
+            MarkdownTokenTypes.TEXT
+        } else {
+            tokenType
+        }
+        if (isLinkDestinationToken() && type == MarkdownTokenTypes.TEXT && currentNodeChildren != null) {
+            val last = currentNodeChildren.lastOrNull()
+            // A destination is plain text, so remapped tokens should not break it into
+            // several TEXT leaves: merge them with the adjacent TEXT tokens (see IJPL-172056)
+            if (last != null &&
+                last.astNode.type == MarkdownTokenTypes.TEXT &&
+                last.endTokenIndex == iterator.index &&
+                tokensCache.Iterator(last.endTokenIndex - 1).end == iterator.start) {
+                val mergedStart = tokensCache.Iterator(last.startTokenIndex).start
+                val merged = nodeBuilder.createLeafNodes(MarkdownTokenTypes.TEXT, mergedStart, iterator.end).single()
+                currentNodeChildren[currentNodeChildren.size - 1] =
+                    MyASTNodeWrapper(merged, last.startTokenIndex, iterator.index + 1)
+                return
+            }
+        }
+        val nodes = nodeBuilder.createLeafNodes(type, iterator.start, iterator.end)
         for (node in nodes) {
             currentNodeChildren?.add(MyASTNodeWrapper(node, iterator.index, iterator.index + 1))
         }
@@ -70,6 +101,10 @@ class InlineBuilder @ExperimentalApi constructor(
         return MyASTNodeWrapper(newNode, startTokenId, endTokenId)
     }
 
+    private fun isLinkDestinationToken(): Boolean {
+        return linkDestinationDepth > 0
+    }
+
     private fun addRawTokens(tokensCache: TokensCache, childrenWithWhitespaces: MutableList<ASTNode>, from: Int, dx: Int, exitOffset: Int) {
         val iterator = tokensCache.Iterator(from)
         var rawIdx = 0
@@ -81,5 +116,16 @@ class InlineBuilder @ExperimentalApi constructor(
             childrenWithWhitespaces.addAll(nodeBuilder.createLeafNodes(rawType, iterator.rawStart(rawIdx), iterator.rawStart(rawIdx + 1)))
             rawIdx -= dx
         }
+    }
+
+    companion object {
+        // These tokens carry no markup inside a link destination, since it is plain text there.
+        // They are remapped to TEXT and glued to the surrounding text
+        private val DESTINATION_TEXT_TOKENS = setOf(
+            MarkdownTokenTypes.EMPH,
+            MarkdownTokenTypes.BACKTICK,
+            GFMTokenTypes.TILDE,
+            GFMTokenTypes.DOLLAR
+        )
     }
 }

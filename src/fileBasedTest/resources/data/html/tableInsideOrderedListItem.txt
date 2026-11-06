@@ -1,0 +1,45 @@
+<body>
+<ol>
+<li>
+<p>Valid separator</p>
+<table>
+<thead>
+<tr>
+<th>Header</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>value</td>
+</tr>
+</tbody>
+</table>
+</li>
+<li>
+<p>Equivalent tab indentation</p>
+<table>
+<thead>
+<tr>
+<th align="center">Header</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td align="center">value</td>
+</tr>
+</tbody>
+</table>
+</li>
+<li>
+<p>Table ends at the list item boundary</p>
+<table>
+<thead>
+<tr>
+<th>Header</th>
+</tr>
+</thead>
+</table>
+</li>
+</ol>
+<p>| value outside the table |</p>
+</body>

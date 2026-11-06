@@ -4,8 +4,11 @@ import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.flavours.commonmark.CommonMarkFlavourDescriptor
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.flavours.space.SFMFlavourDescriptor
-import org.intellij.markdown.html.*
-import kotlin.test.*
+import org.intellij.markdown.html.HtmlGenerator
+import org.intellij.markdown.html.URI
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.fail
 
 class HtmlGeneratorCommonTest : HtmlGeneratorTestBase() {
     override fun getTestDataPath(): String {
@@ -44,6 +47,11 @@ class HtmlGeneratorCommonTest : HtmlGeneratorTestBase() {
 
     @Test
     fun testCodeFence() {
+        defaultTest()
+    }
+
+    @Test
+    fun testDiffCodeFences() {
         defaultTest()
     }
 
@@ -113,7 +121,17 @@ class HtmlGeneratorCommonTest : HtmlGeneratorTestBase() {
     }
 
     @Test
+    fun testHighlight() {
+        defaultTest(GFMFlavourDescriptor())
+    }
+
+    @Test
     fun testGfmAutolink() {
+        defaultTest(GFMFlavourDescriptor())
+    }
+
+    @Test
+    fun testGfmAutolinkWithUsername() {
         defaultTest(GFMFlavourDescriptor())
     }
 
@@ -128,7 +146,42 @@ class HtmlGeneratorCommonTest : HtmlGeneratorTestBase() {
     }
 
     @Test
+    fun testSfmAutolinkWithUsername() {
+        defaultTest(SFMFlavourDescriptor(false))
+    }
+
+    @Test
     fun testGfmTable() {
+        defaultTest(GFMFlavourDescriptor())
+    }
+
+    @Test
+    fun testGfmTableWithBlockQuote() {
+        defaultTest(GFMFlavourDescriptor())
+    }
+
+    @Test
+    fun testTableInsideOrderedListItem() {
+        defaultTest(GFMFlavourDescriptor())
+    }
+
+    @Test
+    fun testTableInsideUnorderedListItem() {
+        defaultTest(GFMFlavourDescriptor())
+    }
+
+    @Test
+    fun testTableInsideNestedListItem() {
+        defaultTest(GFMFlavourDescriptor())
+    }
+
+    @Test
+    fun testTableInsideBlockQuoteInListItem() {
+        defaultTest(GFMFlavourDescriptor())
+    }
+
+    @Test
+    fun testIndentedCodeBlockInsideListItem() {
         defaultTest(GFMFlavourDescriptor())
     }
 
@@ -193,6 +246,17 @@ class HtmlGeneratorCommonTest : HtmlGeneratorTestBase() {
                 return "HTML($html)\n"
             }
         })
+    }
+
+    @Test
+    fun testHtmlBlockZeroLengthNodeAtEof() {
+        val md = "-         <tag>\n" +
+                 " "  // single trailing space, no newline
+        val expectedHtml = """
+             <body><ul><li><pre><code>    &lt;tag&gt;
+             </code></pre></li></ul></body>
+         """.trimIndent()
+        assertEqualsIgnoreLines(expectedHtml, generateHtmlFromString(md))
     }
 
     @Test

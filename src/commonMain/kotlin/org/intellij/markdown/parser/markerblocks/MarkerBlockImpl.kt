@@ -1,5 +1,6 @@
 package org.intellij.markdown.parser.markerblocks
 
+import org.intellij.markdown.ExperimentalApi
 import org.intellij.markdown.IElementType
 import org.intellij.markdown.parser.LookaheadText
 import org.intellij.markdown.parser.ProductionHolder
@@ -9,9 +10,26 @@ import org.intellij.markdown.parser.constraints.MarkdownConstraints
 abstract class MarkerBlockImpl(protected val constraints: MarkdownConstraints,
                                protected val marker: ProductionHolder.Marker) : MarkerBlock {
 
+    @ExperimentalApi
+    override val startOffset: Int
+        get() = marker.startPos
+
     private var lastInterestingOffset: Int = -2
 
     private var scheduledResult: MarkerBlock.ProcessingResult? = null
+
+    private var cachedNonWhitespaceLinePos: LookaheadText.Position? = null
+
+    protected fun getFirstNonWhitespaceLinePos(pos: LookaheadText.Position, toSkip: Int): LookaheadText.Position? {
+        val cachedPos = cachedNonWhitespaceLinePos
+        if (cachedPos != null && cachedPos.offset > pos.offset) {
+            return cachedPos
+        }
+
+        return MarkdownParserUtil.getFirstNonWhitespaceLinePos(pos, toSkip).also {
+            cachedNonWhitespaceLinePos = it?.takeIf { nonWhitespacePos -> nonWhitespacePos.offset > pos.offset }
+        }
+    }
 
     final override fun getNextInterestingOffset(pos: LookaheadText.Position): Int {
         if (scheduledResult != null) {

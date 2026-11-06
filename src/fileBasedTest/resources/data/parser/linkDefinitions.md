@@ -1,3 +1,5 @@
+[credentials]: https://username:password@example.com
+
 [foo]: /url
 "title" ok
 
@@ -68,3 +70,15 @@ Foo
 
 [foo]: <bar
 baz>
+
+[foo
+
+bar]: /url
+
+> [foo
+
+bar]: /url
+
+- [foo
+
+bar]: /url
