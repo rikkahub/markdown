@@ -3,7 +3,6 @@ package org.intellij.markdown.parser.sequentialparsers.impl
 import org.intellij.markdown.MarkdownTokenTypes
 import org.intellij.markdown.flavours.gfm.GFMElementTypes
 import org.intellij.markdown.flavours.gfm.GFMTokenTypes
-import org.intellij.markdown.html.isPunctuation
 import org.intellij.markdown.html.isWhitespace
 import org.intellij.markdown.parser.sequentialparsers.RangesListBuilder
 import org.intellij.markdown.parser.sequentialparsers.SequentialParser
@@ -86,7 +85,7 @@ class MathParser : SequentialParser {
 
     private fun canOpenMath(iterator: TokensCache.Iterator): Boolean {
         val previous = iterator.charLookup(-1)
-        if (previous.isWordCharacter() || isPunctuation(previous)) {
+        if (previous.isWordCharacter()) {
             return false
         }
         return iterator.isBlockDelimiter() || !isWhitespace(iterator.charLookup(1))
@@ -128,7 +127,12 @@ class MathParser : SequentialParser {
         return result
     }
 
+    /**
+     * Only ASCII letters, digits and `_` count, so a `$` inside an English word or
+     * a currency amount (`foo$1`, `$1+2$3`) is not a delimiter. Punctuation and
+     * CJK text may touch a delimiter: `**$x$**`, `($x$)`, `设$x$为`, `：$x$`.
+     */
     private fun Char.isWordCharacter(): Boolean {
-        return isLetterOrDigit() || this == '_'
+        return this in 'a'..'z' || this in 'A'..'Z' || this in '0'..'9' || this == '_'
     }
 }

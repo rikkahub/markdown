@@ -114,15 +114,31 @@ class GfmTest: SpecTest(org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor(
     )
 
     @Test
-    fun testInlineMathDoesNotStartInsideWordsOrAfterPunctuation() = doPlainParagraphTests(
+    fun testInlineMathDoesNotStartInsideWords() = doPlainParagraphTests(
         "foo$1+2$ bar",
-        ".$1+2$",
-        "-$1+2$",
         "_$1+2$",
-        "/$1+2$",
-        "+$1+2$",
-        "@$1+2$",
-        "#$1+2$",
+    )
+
+    @Test
+    fun testInlineMathNextToPunctuation() {
+        doTest(
+            markdown = "**\$x\$**",
+            html = "<p><strong><span class=\"math\" inline = \"true\">x</span></strong></p>"
+        )
+        doTest(
+            markdown = "(\$x\$)",
+            html = "<p>(<span class=\"math\" inline = \"true\">x</span>)</p>"
+        )
+        doTest(
+            markdown = "**B：\$x\$**。",
+            html = "<p><strong>B：<span class=\"math\" inline = \"true\">x</span></strong>。</p>"
+        )
+    }
+
+    @Test
+    fun testInlineMathNextToCjkText() = doTest(
+        markdown = "设\$x\$为",
+        html = "<p>设<span class=\"math\" inline = \"true\">x</span>为</p>"
     )
 
     @Test
